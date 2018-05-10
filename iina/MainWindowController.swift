@@ -8,6 +8,7 @@
 
 import Cocoa
 import Mustache
+import ColorSync
 
 fileprivate typealias PK = Preference.Key
 
@@ -651,8 +652,11 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       }
       self.cachedScreenCount = screenCount
+      
+      self.setICCProfile()
     }
-
+    
+    setICCProfile()
   }
 
   deinit {
@@ -815,6 +819,35 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         controlBarFloating.superview?.removeConstraints(constraints)
         oscFloatingLeadingTrailingConstraint = nil
       }
+    }
+  }
+  
+  private func setICCProfile() {
+    let deviceID = self.window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! NSNumber
+    let uuid = CGDisplayCreateUUIDFromDisplayID(deviceID.uint32Value).takeRetainedValue()
+    
+    var argResult = (uuid, "")
+    let data_ptr = UnsafeMutablePointer(&argResult)
+    
+    ColorSyncIterateDeviceProfiles({ (dict: CFDictionary?, ptr: UnsafeMutableRawPointer?) -> Bool in
+      if let info = dict as? [String: Any], let current = info["DeviceProfileIsCurrent"] as? Int {
+        let deviceID = info["DeviceID"] as! CFUUID
+        let ptr = ptr!.bindMemory(to: (CFUUID, String).self, capacity: 1)
+        let uuid = ptr.pointee.0
+        
+        if current == 1, deviceID == uuid {
+          let profileURL = info["DeviceProfileURL"] as! URL
+          
+          ptr.pointee.1 = profileURL.absoluteString
+          return false
+        }
+      }
+      
+      return true
+    }, data_ptr)
+    
+    if let iccProfilePath = URL(string: argResult.1)?.path, FileManager.default.fileExists(atPath: iccProfilePath) {
+      self.player.mpv.setString(MPVOption.OpenGLRendererOptions.iccProfile, iccProfilePath)
     }
   }
 
